@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cheer Gym Portal</title>
     <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com/"></script>
     <style>
         /* Custom styles not covered by Tailwind, or overrides */
         body {
@@ -181,6 +181,7 @@
 
         // UI State Variables (managed directly via global vars and DOM updates)
         let appMode = 'checkIn'; // 'checkIn' or 'coach'
+        let coachLoggedIn = false; // New: Tracks coach login status
 
         // Modals
         let showModal = false;
@@ -233,6 +234,7 @@
         let newCoachPhone = '';
         let newCoachTeams = [];
         let newCoachClasses = [];
+        let newCoachPasscode = ''; // New: For new coach passcode
         let editingCoach = null; // Object of coach being edited
 
         // Camera states
@@ -358,10 +360,10 @@
 
         // Dummy Coach Data for Seeding
         const dummyCoaches = [
-            { name: 'Coach Alex', email: 'alex@example.com', phone: '555-001-0001', isApproved: true, teams: ['Sparkle Squad', 'Power Pumas'], classes: ['Tumble Basics'], firebaseUid: '' },
-            { name: 'Coach Ben', email: 'ben@example.com', phone: '555-002-0002', isApproved: true, teams: ['Victory Vipers'], classes: ['Jump & Stunt Drills', 'Routine Polish'], firebaseUid: '', isSuperAdmin: false },
-            { name: 'Coach Casey', email: 'casey@example.com', phone: '555-003-0003', isApproved: true, teams: ['Cheer Comets'], classes: ['Flexibility Fusion'], firebaseUid: '', isSuperAdmin: false },
-            { name: 'Coach Dylan', email: 'dylan@example.com', phone: '555-004-0004', isApproved: true, teams: [], classes: [], firebaseUid: '', isSuperAdmin: false },
+            { name: 'Coach Alex', email: 'alex@example.com', phone: '555-001-0001', isApproved: true, teams: ['Sparkle Squad', 'Power Pumas'], classes: ['Tumble Basics'], firebaseUid: '', passcode: '0000' },
+            { name: 'Coach Ben', email: 'ben@example.com', phone: '555-002-0002', isApproved: true, teams: ['Victory Vipers'], classes: ['Jump & Stunt Drills', 'Routine Polish'], firebaseUid: '', isSuperAdmin: false, passcode: '0000' },
+            { name: 'Coach Casey', email: 'casey@example.com', phone: '555-003-0003', isApproved: true, teams: ['Cheer Comets'], classes: ['Flexibility Fusion'], firebaseUid: '', isSuperAdmin: false, passcode: '0000' },
+            { name: 'Coach Dylan', email: 'dylan@example.com', phone: '555-004-0004', isApproved: true, teams: [], classes: [], firebaseUid: '', isSuperAdmin: false, passcode: '0000' },
         ];
 
 
@@ -387,7 +389,7 @@
         };
 
         /**
-         * Formats a Date object into a string suitable for datetime-local input (YYYY-MM-DDTHH:mm).
+         * Formats a Date object or Firestore Timestamp to a string suitable for datetime-local input (YYYY-MM-DDTHH:mm).
          * @param {Date | Timestamp | null} dateInput The Date object or Firestore Timestamp.
          * @returns {string} The formatted date-time string, or empty string if input is null.
          */
@@ -462,7 +464,7 @@
             modalElement.classList.remove('hidden');
         };
 
-        const showConfirmWithInputModal = (message, onConfirmCallback, onCancelCallback, inputPlaceholder = '') => {
+        const showConfirmWithInputModal = (message, onConfirmCallback, onCancelCallback, inputPlaceholder = '', inputType = 'password') => {
             showConfirmModal = true;
             confirmModalConfig = {
                 message: message,
@@ -470,7 +472,8 @@
                 onCancel: onCancelCallback,
                 input: true,
                 inputValue: '',
-                inputPlaceholder: inputPlaceholder
+                inputPlaceholder: inputPlaceholder,
+                inputType: inputType
             };
 
             const confirmModalElement = document.getElementById('confirmModal');
@@ -482,7 +485,7 @@
             confirmModalMessageElement.textContent = confirmModalConfig.message;
             confirmModalInput.value = confirmModalConfig.inputValue; // Clear previous input
             confirmModalInput.placeholder = confirmModalConfig.inputPlaceholder || 'Enter value';
-            confirmModalInput.type = 'password'; // Always password for security
+            confirmModalInput.type = confirmModalConfig.inputType; // Set input type dynamically
 
             confirmModalInput.focus(); // Auto-focus
 
@@ -607,6 +610,7 @@
             // Check-in Logs Listener
             const logsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/checkin_logs`);
             onSnapshot(query(logsCollectionRef), (snapshot) => {
+                console.log("onSnapshot for checkin_logs triggered. New snapshot data:", snapshot.docs.map(d => ({id: d.id, data: d.data()})));
                 checkinLogs = snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data(),
@@ -673,7 +677,7 @@
                 appMode === 'checkIn' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-200 text-gray-700 hover:bg-blue-100'
             }`;
             coachModeBtn.className = `px-6 py-2 rounded-lg font-semibold transition duration-300 ease-in-out ${
-                appMode === 'coach' ? 'bg-purple-600 text-white shadow-lg' : 'bg-gray-200 text-gray-700 hover:bg-purple-100'
+                appMode === 'coach' && coachLoggedIn ? 'bg-purple-600 text-white shadow-lg' : 'bg-gray-200 text-gray-700 hover:bg-purple-100'
             }`;
 
             // Show/hide main containers
@@ -684,7 +688,26 @@
             if (appMode === 'checkIn') {
                 renderCheckInPortal();
             } else if (appMode === 'coach') {
-                renderCoachDashboard();
+                if (coachLoggedIn) {
+                    renderCoachDashboard();
+                } else {
+                    // If not logged in as coach, show a message or go back to check-in
+                    const coachDashboardContainer = document.getElementById('coachDashboardContainer');
+                    coachDashboardContainer.innerHTML = `
+                        <div class="bg-white rounded-xl shadow-lg p-6 max-w-2xl mx-auto min-h-[400px] flex flex-col items-center justify-center text-center">
+                            <h2 class="text-3xl font-bold text-red-700 mb-4">Access Denied</h2>
+                            <p class="text-lg text-gray-700 mb-6">Please log in with a coach passcode to access the Coach Dashboard.</p>
+                            <button id="returnToCheckInBtn" class="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition duration-300 ease-in-out font-semibold">
+                                Return to Check-In
+                            </button>
+                        </div>
+                    `;
+                    coachDashboardContainer.querySelector('#returnToCheckInBtn').onclick = () => {
+                        appMode = 'checkIn';
+                        renderApp();
+                    };
+                    coachDashboardContainer.classList.remove('hidden');
+                }
             }
 
             // Show/hide loading spinner based on auth readiness
@@ -795,6 +818,7 @@
                 if (filtered.length === 0) {
                     athleteRosterList.innerHTML = `<p class="text-center text-gray-600 text-lg">No athletes assigned to this ${selectedCategory} yet.</p>`;
                 } else {
+                    athleteRosterList.innerHTML = ''; // Clear existing rows
                     filtered.forEach(athlete => {
                         const listItem = document.createElement('li');
                         listItem.className = 'relative';
@@ -924,6 +948,25 @@
             }
             console.log("Rendering Coach Dashboard. Current coachView:", coachView); // Diagnostic log
 
+            // If not logged in as coach, display access denied message and return
+            if (!coachLoggedIn) {
+                container.innerHTML = `
+                    <div class="bg-white rounded-xl shadow-lg p-6 max-w-2xl mx-auto min-h-[400px] flex flex-col items-center justify-center text-center">
+                        <h2 class="text-3xl font-bold text-red-700 mb-4">Access Denied</h2>
+                        <p class="text-lg text-gray-700 mb-6">Please log in with a coach passcode to access the Coach Dashboard.</p>
+                        <button id="returnToCheckInBtn" class="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition duration-300 ease-in-out font-semibold">
+                            Return to Check-In
+                        </button>
+                    </div>
+                `;
+                container.querySelector('#returnToCheckInBtn').onclick = () => {
+                    appMode = 'checkIn';
+                    renderApp();
+                };
+                return; // Stop rendering the rest of the dashboard if not logged in
+            }
+
+
             container.innerHTML = `
                 <div class="bg-white rounded-xl shadow-lg p-6 max-w-6xl mx-auto min-h-[600px] flex flex-col">
                     <h2 class="text-3xl font-bold text-gray-800 mb-6 text-center">Coach Dashboard</h2>
@@ -1043,18 +1086,12 @@
         };
 
         const handleCoachLogout = async () => {
-            if (auth) {
-                try {
-                    await signOut(auth);
-                    showCustomModal("You have been logged out.");
-                    // No need to set coachLoggedIn, appMode will implicitly change by auth state.
-                    appMode = 'checkIn'; // Go back to check-in view
-                    renderApp();
-                } catch (error) {
-                    console.error("Error logging out:", error);
-                    showCustomModal(`Failed to log out: ${error.message}`);
-                }
-            }
+            coachLoggedIn = false; // Set coach logged in status to false
+            appMode = 'checkIn'; // Go back to check-in view
+            renderApp(); // Re-render the app to reflect the change
+            showCustomModal("You have been logged out from Coach Dashboard.");
+            // No need to call Firebase signOut if only managing UI access for now
+            // If Firebase Auth were used for real coach logins, signOut(auth) would go here.
         };
 
         const handleResetCheckIns = async () => {
@@ -1268,6 +1305,10 @@
                                 <label for="coachPhone" class="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
                                 <input type="tel" id="coachPhone" class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" placeholder="###-###-####" />
                             </div>
+                            <div>
+                                <label for="coachPasscode" class="block text-sm font-medium text-gray-700 mb-1">Coach Passcode *</label>
+                                <input type="password" id="coachPasscode" class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500" placeholder="4-digit passcode" maxlength="4" />
+                            </div>
                             <div class="md:col-span-2">
                                 <div class="mb-4">
                                     <label class="block text-sm font-medium text-gray-700 mb-2">Assigned Teams</label>
@@ -1311,6 +1352,7 @@
             const coachNameInput = parentContainer.querySelector('#coachName');
             const coachEmailInput = parentContainer.querySelector('#coachEmail');
             const coachPhoneInput = parentContainer.querySelector('#coachPhone');
+            const coachPasscodeInput = parentContainer.querySelector('#coachPasscode'); // New
             const coachTeamsTagsInput = parentContainer.querySelector('#coachTeamsTagsInput');
             const coachClassesTagsInput = parentContainer.querySelector('#coachClassesTagsInput');
             const coachFormCancelBtn = parentContainer.querySelector('#coachFormCancelBtn');
@@ -1323,6 +1365,7 @@
                 coachNameInput.value = editingCoach.name || '';
                 coachEmailInput.value = editingCoach.email || '';
                 coachPhoneInput.value = formatPhoneNumber(editingCoach.phone || '');
+                coachPasscodeInput.value = editingCoach.passcode || ''; // New
                 coachNameInput.readOnly = true;
                 coachEmailInput.readOnly = true;
                 coachPhoneInput.readOnly = true;
@@ -1333,6 +1376,7 @@
                 coachNameInput.value = newCoachName || '';
                 coachEmailInput.value = newCoachEmail || '';
                 coachPhoneInput.value = formatPhoneNumber(newCoachPhone || '');
+                coachPasscodeInput.value = newCoachPasscode || ''; // New
                 coachNameInput.readOnly = false;
                 coachEmailInput.readOnly = false;
                 coachPhoneInput.readOnly = false;
@@ -1348,6 +1392,13 @@
                 if (editingCoach) editingCoach.phone = formatted; else newCoachPhone = formatted;
                 e.target.value = formatted; // Update input value
             };
+            // New: Passcode input handler
+            coachPasscodeInput.oninput = (e) => {
+                const value = e.target.value.replace(/\D/g, '').slice(0, 4); // Keep only digits, max 4
+                e.target.value = value;
+                if (editingCoach) editingCoach.passcode = value; else newCoachPasscode = value;
+            };
+
 
             // Render TagsInput components
             renderTagsInput(coachTeamsTagsInput, 'Assigned Teams', teams, editingCoach ? editingCoach.teams : newCoachTeams, (newSelection) => {
@@ -1358,7 +1409,7 @@
                 if (editingCoach) editingCoach.classes = newSelection; else newCoachClasses = newSelection;
             }, !!editingCoach);
 
-            coachFormCancelBtn.onclick = () => { editingCoach = null; newCoachName = ''; newCoachEmail = ''; newCoachPhone = ''; newCoachTeams = []; newCoachClasses = []; renderCoachManagement(parentContainer); };
+            coachFormCancelBtn.onclick = () => { editingCoach = null; newCoachName = ''; newCoachEmail = ''; newCoachPhone = ''; newCoachTeams = []; newCoachClasses = []; newCoachPasscode = ''; renderCoachManagement(parentContainer); };
             coachFormSubmitBtn.onclick = () => {
                 if (editingCoach) {
                     handleUpdateCoach(parentContainer);
@@ -1438,6 +1489,11 @@
                 showCustomModal("Coach Name and Email cannot be empty.");
                 return;
             }
+            if (!newCoachPasscode.match(/^\d{4}$/)) { // Validate 4-digit numeric passcode
+                showCustomModal("Passcode must be a 4-digit number.");
+                return;
+            }
+
 
             showConfirmWithInputModal(
                 "Enter MASTER passcode to add new coach:",
@@ -1456,6 +1512,7 @@
                                 teams: newCoachTeams,
                                 classes: newCoachClasses,
                                 firebaseUid: '', // This would typically be populated upon a coach user logging in, but is left empty for now
+                                passcode: newCoachPasscode, // New: Add the passcode
                             };
                             console.log("Attempting to add coach with data:", coachData); // Diagnostic log
                             await setDoc(docRef, coachData);
@@ -1468,6 +1525,7 @@
                             newCoachPhone = ''; // Clear the formatted value too
                             newCoachTeams = [];
                             newCoachClasses = [];
+                            newCoachPasscode = ''; // Clear passcode
                             renderCoachManagement(parentContainer); // Re-render the form
                         } catch (error) {
                             console.error("Error adding coach:", error);
@@ -1476,8 +1534,7 @@
                     } else {
                         showCustomModal("Incorrect MASTER passcode. Coach not added.");
                     }
-                },
-                () => { /* do nothing on cancel */ }
+                }
             );
         };
 
@@ -1491,8 +1548,7 @@
                     } else {
                         showCustomModal("Incorrect MASTER passcode. You do not have permission to edit this coach.");
                     }
-                },
-                () => { /* do nothing on cancel */ }
+                }
             );
         };
 
@@ -1506,6 +1562,11 @@
                 showCustomModal("Coach Name and Email cannot be empty.");
                 return;
             }
+            if (!editingCoach.passcode.match(/^\d{4}$/)) { // Validate 4-digit numeric passcode
+                showCustomModal("Passcode must be a 4-digit number.");
+                return;
+            }
+
 
             showConfirmWithInputModal(
                 "Enter MASTER passcode to confirm update:",
@@ -1519,6 +1580,7 @@
                                 phone: editingCoach.phone.trim(),
                                 teams: editingCoach.teams,
                                 classes: editingCoach.classes,
+                                passcode: editingCoach.passcode, // New: Update the passcode
                             });
                             editingCoach = null; // Clear editing state
                             showCustomModal("Coach updated successfully!");
@@ -1530,8 +1592,7 @@
                     } else {
                         showCustomModal("Incorrect MASTER passcode. Coach not updated.");
                     }
-                },
-                () => { /* do nothing on cancel */ }
+                }
             );
         };
 
@@ -1552,8 +1613,7 @@
                     } else {
                         showCustomModal("Incorrect MASTER passcode. Approval denied.");
                     }
-                },
-                () => { /* do nothing on cancel */ }
+                }
             );
         };
 
@@ -1573,8 +1633,7 @@
                     } else {
                         showCustomModal("Incorrect MASTER passcode. Coach not deleted.");
                     }
-                },
-                () => { /* do nothing on cancel */ }
+                }
             );
         };
 
@@ -1757,8 +1816,7 @@
                     } else {
                         showCustomModal("Incorrect MASTER passcode. You do not have permission to edit.");
                     }
-                },
-                () => { /* do nothing on cancel */ }
+                }
             );
         };
 
@@ -1786,8 +1844,7 @@
                     } else {
                         showCustomModal("Incorrect MASTER passcode. Approval denied.");
                     }
-                },
-                () => { /* do nothing on cancel */ }
+                }
             );
         };
 
@@ -2411,7 +2468,7 @@
         // --- CheckinLogsView Component Rendering ---
         const renderCheckinLogsView = (parentContainer) => {
             if (!parentContainer) return;
-            console.log("Rendering Check-in Logs View."); // Diagnostic log
+            console.log("renderCheckinLogsView called. Current checkinLogs:", checkinLogs);
 
             parentContainer.innerHTML = `
                 <div class="flex-grow flex flex-col p-4 bg-gray-50 rounded-lg shadow-inner">
@@ -2475,103 +2532,114 @@
                 filterEntitySelect.classList.add('hidden');
             }
 
-
             const currentFilteredLogs = checkinLogs.map(log => {
-                const approvedAthletes = athletes.filter(a => a.isApproved);
                 const checkedInAthleteEventsForLog = log.dailyCheckInEvents || [];
-                let currentLogCombinedEvents = [];
+                const logEventsMap = new Map(); // Map to quickly check for actual check-ins
+                checkedInAthleteEventsForLog.forEach(event => {
+                    // Normalize timestamp to a simple string for map key, or use unique ID if available
+                    // For now, combine fields to create a unique key for actual check-ins
+                    const key = `${event.athleteId}_${event.checkInType}_${event.checkInEntity}`;
+                    logEventsMap.set(key, event);
+                });
 
-                approvedAthletes.forEach(athlete => {
-                    const athleteId = athlete.id;
-                    const athleteNameLower = athlete.name.toLowerCase();
+                let combinedEvents = [];
 
-                    if (!athleteNameLower.includes(filterAthleteName.toLowerCase())) {
-                        return;
+                // 1. Add all actual checked-in events from the log that match the athlete name filter
+                checkedInAthleteEventsForLog.forEach(event => {
+                    const athlete = athletes.find(a => a.id === event.athleteId);
+                    if (athlete && athlete.name.toLowerCase().includes(filterAthleteName.toLowerCase())) {
+                        const eventCategoryKey = event.checkInType === 'team' ? 'teams' : 'classes';
+                        const isRelevantCategory = filterCategory === 'All' || filterCategory === event.checkInType;
+                        const isRelevantEntity = filterEntity === 'All' || filterEntity === event.checkInEntity;
+
+                        if (isRelevantCategory && isRelevantEntity && (filterStatus === 'All' || filterStatus === 'Checked In')) {
+                             combinedEvents.push({ ...event, athleteName: athlete.name, status: 'Checked In' });
+                        }
                     }
+                });
 
+                // 2. Identify 'Missed' athletes/entities
+                const approvedAthletesFilteredByName = athletes.filter(athlete =>
+                    athlete.isApproved && athlete.name.toLowerCase().includes(filterAthleteName.toLowerCase())
+                );
+
+                approvedAthletesFilteredByName.forEach(athlete => {
+                    const athleteId = athlete.id;
                     const athleteTeams = athlete.teams || [];
                     const athleteClasses = athlete.classes || [];
 
-                    let expectedEntities = [];
+                    let expectedEntitiesForAthlete = [];
                     if (filterCategory === 'All' || filterCategory === 'team') {
                         const relevantTeams = filterEntity === 'All' ? athleteTeams : athleteTeams.filter(t => t === filterEntity);
-                        expectedEntities = [...expectedEntities, ...relevantTeams.map(team => ({ type: 'team', name: team }))];
+                        expectedEntitiesForAthlete = [...expectedEntitiesForAthlete, ...relevantTeams.map(team => ({ type: 'team', name: team }))];
                     }
                     if (filterCategory === 'All' || filterCategory === 'class') {
                         const relevantClasses = filterEntity === 'All' ? athleteClasses : athleteClasses.filter(c => c === filterEntity);
-                        expectedEntities = [...expectedEntities, ...relevantClasses.map(cls => ({ type: 'class', name: cls }))];
+                        expectedEntitiesForAthlete = [...expectedEntitiesForAthlete, ...relevantClasses.map(cls => ({ type: 'class', name: cls }))];
                     }
 
-                    expectedEntities.forEach(expected => {
-                        const hasActualCheckin = checkedInAthleteEventsForLog.some(event =>
-                            event.athleteId === athleteId &&
-                            event.checkInType === expected.type &&
-                            event.checkInEntity === expected.name
-                        );
-
-                        if (hasActualCheckin) {
-                            if (filterStatus === 'Checked In' || filterStatus === 'All') {
-                                const actualCheckinEvent = checkedInAthleteEventsForLog.find(event =>
-                                    event.athleteId === athleteId &&
-                                    event.checkInType === expected.type &&
-                                    event.checkInEntity === expected.name
-                                );
-                                currentLogCombinedEvents.push({
-                                    athleteId: athleteId,
-                                    athleteName: athlete.name,
-                                    checkInType: expected.type,
-                                    checkInEntity: expected.name,
-                                    timestamp: actualCheckinEvent.timestamp,
-                                    status: 'Checked In'
-                                });
-                            }
-                        } else {
-                            if (filterStatus === 'Missed' || filterStatus === 'All') {
-                                const isAlreadyAddedAsCheckedIn = currentLogCombinedEvents.some(item =>
+                    expectedEntitiesForAthlete.forEach(expected => {
+                        const key = `${athleteId}_${expected.type}_${expected.name}`;
+                        if (!logEventsMap.has(key)) { // If this expected entry was NOT found in actual check-ins for this log
+                            if (filterStatus === 'All' || filterStatus === 'Missed') {
+                                // Ensure we don't add a 'Missed' if a 'Checked In' event for the same athlete/entity is already in combinedEvents
+                                const isAlreadyAddedAsCheckedIn = combinedEvents.some(item =>
                                     item.athleteId === athleteId &&
                                     item.checkInType === expected.type &&
                                     item.checkInEntity === expected.name &&
                                     item.status === 'Checked In'
                                 );
-
                                 if (!isAlreadyAddedAsCheckedIn) {
-                                    currentLogCombinedEvents.push({
-                                        athleteId: athleteId,
-                                        athleteName: athlete.name,
-                                        checkInType: expected.type,
-                                        checkInEntity: expected.name,
-                                        timestamp: null,
-                                        status: 'Missed'
-                                    });
+                                     combinedEvents.push({
+                                         athleteId: athleteId,
+                                         athleteName: athlete.name,
+                                         checkInType: expected.type,
+                                         checkInEntity: expected.name,
+                                         timestamp: null, // Missed entry, no timestamp
+                                         status: 'Missed'
+                                     });
                                 }
                             }
                         }
                     });
                 });
 
-                const uniqueEventsMap = new Map();
-                currentLogCombinedEvents.forEach(event => {
-                    const key = `${event.athleteId}_${event.checkInType}_${event.checkInEntity}_${event.status}`;
-                    uniqueEventsMap.set(key, event);
+                // Deduplicate combinedEvents (if any duplicates were somehow introduced)
+                const uniqueCombinedEventsMap = new Map();
+                combinedEvents.forEach(event => {
+                    const key = `${event.athleteId}_${event.checkInType}_${event.checkInEntity}`;
+                    // If a "Checked In" entry exists, prioritize it over a "Missed" one for the same key
+                    if (event.status === 'Checked In' || !uniqueCombinedEventsMap.has(key) || uniqueCombinedEventsMap.get(key).status === 'Missed') {
+                        uniqueCombinedEventsMap.set(key, event);
+                    }
                 });
-                const finalEvents = Array.from(uniqueEventsMap.values());
+                const finalEvents = Array.from(uniqueCombinedEventsMap.values());
+
 
                 finalEvents.sort((a, b) => {
-                    if (a.status === 'Missed' && b.status !== 'Missed') return 1;
-                    if (a.status !== 'Missed' && b.status === 'Missed') return -1;
+                    // Prioritize Checked In over Missed for sorting
+                    if (a.status === 'Checked In' && b.status === 'Missed') return -1;
+                    if (a.status === 'Missed' && b.status === 'Checked In') return 1;
                     const nameComparison = a.athleteName.localeCompare(b.athleteName);
                     if (nameComparison !== 0) return nameComparison;
-                    const timestampA = a.timestamp ? (a.timestamp instanceof Timestamp ? a.timestamp.toDate().getTime() : a.timestamp.getTime()) : 0;
-                    const timestampB = b.timestamp ? (b.timestamp instanceof Timestamp ? b.timestamp.toDate().getTime() : b.timestamp.getTime()) : 0;
-                    return timestampA - timestampB;
+                    // For checked-in events, sort by time (most recent first)
+                    if (a.status === 'Checked In' && b.status === 'Checked In') {
+                        const timestampA = a.timestamp ? (a.timestamp instanceof Timestamp ? a.timestamp.toDate().getTime() : a.timestamp.getTime()) : 0;
+                        const timestampB = b.timestamp ? (b.timestamp instanceof Timestamp ? b.timestamp.toDate().getTime() : b.timestamp.getTime()) : 0;
+                        return timestampB - timestampA; // New: Sort by most recent first
+                    }
+                    return 0;
                 });
+
+                console.log(`Log ${log.id} - Final Events after filtering:`, finalEvents);
 
                 if (finalEvents.length > 0) {
                     return { ...log, filteredDailyCheckInEvents: finalEvents };
                 }
                 return null;
-            }).filter(Boolean);
+            }).filter(Boolean); // Filter out any null log entries
 
+            console.log("Current Filtered Logs for display:", currentFilteredLogs);
 
             if (currentFilteredLogs.length === 0) {
                 checkinLogsDisplay.innerHTML = `<p class="text-center text-gray-600 text-lg">No check-in logs found matching your filters yet.</p>`;
@@ -2587,9 +2655,9 @@
                             </p>
                             <div class="flex space-x-2">
                                 <button class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-200 text-sm edit-log-btn" data-log-id="${log.id}">Edit Log</button>
-                                <button class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition duration-200 text-sm add-manual-checkin-btn" data-log-id="${log.id}" style="display: none;">Add Manual Check-in</button>
-                                <button class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition duration-200 text-sm save-log-changes-btn" data-log-id="${log.id}" style="display: none;">Save Changes</button>
-                                <button class="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition duration-200 text-sm cancel-log-edit-btn" data-log-id="${log.id}" style="display: none;">Cancel</button>
+                                <button class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition duration-200 text-sm add-manual-checkin-btn" data-log-id="${log.id}">Add Manual Check-in</button>
+                                <button class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition duration-200 text-sm save-log-changes-btn" data-log-id="${log.id}">Save Changes</button>
+                                <button class="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition duration-200 text-sm cancel-log-edit-btn" data-log-id="${log.id}">Cancel</button>
                             </div>
                         </div>
                         <p class="text-sm text-gray-600 mb-2">Reset by User ID: ${log.resetByUserId}</p>
@@ -2599,17 +2667,22 @@
                     checkinLogsDisplay.appendChild(logEntryDiv);
 
                     const logAthletesList = logEntryDiv.querySelector(`#logAthletesList-${log.id}`);
-                    if (log.filteredDailyCheckInEvents.length === 0) {
+                    // Determine which list of events to display: temporary for editing, or filtered from DB
+                    const displayEvents = editingLogEntryId === log.id ? currentLogAthletes : log.filteredDailyCheckInEvents;
+
+                    if (displayEvents.length === 0) {
                         logAthletesList.innerHTML = `<p class="text-sm text-gray-500 italic">No athletes in this log entry matching current filters.</p>`;
                     } else {
-                        log.filteredDailyCheckInEvents.forEach((event, index) => {
+                        logAthletesList.innerHTML = '';
+                        displayEvents.forEach((event, index) => {
                             const listItem = document.createElement('li');
                             listItem.className = `list-disc list-inside ${event.status === 'Missed' ? 'text-red-700' : ''}`;
                             if (editingLogEntryId === log.id) {
                                 listItem.innerHTML = `
                                     <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-gray-50 p-2 rounded-md mb-2">
                                         <div class="flex-grow flex flex-col sm:flex-row sm:items-center w-full sm:w-auto">
-                                            <input type="text" class="flex-grow p-1 border border-gray-300 rounded-md text-sm mr-2 mb-2 sm:mb-0" value="${event.athleteName || ''}" />
+                                            <input type="text" class="flex-grow p-1 border border-gray-300 rounded-md text-sm mr-2 mb-2 sm:mb-0" value="${event.athleteName || ''}" readonly />
+                                            <span class="text-xs text-gray-600 mr-2 mb-2 sm:mb-0">(${event.checkInType}: ${event.checkInEntity})</span>
                                             ${event.status !== 'Missed' ? `<input type="datetime-local" class="p-1 border border-gray-300 rounded-md text-sm" value="${formatToDatetimeLocal(event.timestamp)}" />` : ''}
                                         </div>
                                         <button class="text-red-500 hover:text-red-700 text-xs mt-2 sm:mt-0 sm:ml-4 remove-athlete-from-log-btn" data-index="${index}">Remove</button>
@@ -2619,7 +2692,7 @@
                                 const timeInput = listItem.querySelector('input[type="datetime-local"]');
                                 const removeBtn = listItem.querySelector('.remove-athlete-from-log-btn');
 
-                                if (nameInput) nameInput.oninput = (e) => handleUpdateAthleteFieldInLog(index, 'athleteName', e.target.value);
+                                // Only allow changing time if it's not a 'Missed' entry
                                 if (timeInput) timeInput.onchange = (e) => handleUpdateAthleteFieldInLog(index, 'timestamp', e.target.value);
                                 if (removeBtn) removeBtn.onclick = () => handleRemoveAthleteFromLog(index);
 
@@ -2636,25 +2709,26 @@
                     const saveLogChangesBtn = logEntryDiv.querySelector('.save-log-changes-btn');
                     const cancelLogEditBtn = logEntryDiv.querySelector('.cancel-log-edit-btn');
 
-                    if (editingLogEntryId === log.id) {
-                        editLogBtn.style.display = 'none';
-                        addManualCheckinBtn.style.display = '';
-                        saveLogChangesBtn.style.display = '';
-                        cancelLogEditBtn.style.display = '';
-                        // Set currentLogAthletes for the editor
-                        currentLogAthletes = log.dailyCheckInEvents ?
-                            JSON.parse(JSON.stringify(log.dailyCheckInEvents)).map(event => ({
+                    // Control button visibility based on editing state
+                    const isInEditMode = editingLogEntryId === log.id;
+                    editLogBtn.classList.toggle('hidden', isInEditMode);
+                    addManualCheckinBtn.classList.toggle('hidden', !isInEditMode);
+                    saveLogChangesBtn.classList.toggle('hidden', !isInEditMode);
+                    cancelLogEditBtn.classList.toggle('hidden', !isInEditMode);
+
+                    if (isInEditMode) {
+                        // When entering edit mode, ensure currentLogAthletes is initialized from the actual log data
+                        // This prevents re-copying if manual check-in or remove has already modified it
+                        if (currentLogAthletes.length === 0 && log.dailyCheckInEvents) {
+                            currentLogAthletes = JSON.parse(JSON.stringify(log.dailyCheckInEvents)).map(event => ({
                                 ...event,
                                 timestamp: event.timestamp ? new Timestamp(event.timestamp.seconds, event.timestamp.nanoseconds).toDate() : null
-                            })) : [];
+                            }));
+                        }
                         // Set initial manual check-in timestamp based on the log's original timestamp
                         manualCheckinTimestamp = formatToDatetimeLocal(log.timestamp || new Date());
-                    } else {
-                        editLogBtn.style.display = '';
-                        addManualCheckinBtn.style.display = 'none';
-                        saveLogChangesBtn.style.display = 'none';
-                        cancelLogEditBtn.style.display = 'none';
                     }
+
 
                     editLogBtn.onclick = () => handleEditLog(log);
                     addManualCheckinBtn.onclick = () => handleAddManualCheckinClick(log.id); // Pass log ID for context
@@ -2665,7 +2739,15 @@
         };
 
         const handleAddManualCheckinClick = (logId) => {
-            editingLogEntryId = logId; // Make sure we're operating on the correct log
+            console.log("handleAddManualCheckinClick called for logId:", logId);
+            // Find the log entry we are editing
+            const logToEdit = checkinLogs.find(log => log.id === logId);
+            if (logToEdit && editingLogEntryId !== logId) {
+                // If not already in edit mode for this log, enter it first.
+                // This ensures currentLogAthletes is correctly populated before adding.
+                handleEditLog(logToEdit);
+            }
+
             showAddManualCheckinModal = true;
             // Populate manual check-in modal dropdowns
             const manualAthleteSelect = document.getElementById('manualAthlete');
@@ -2697,6 +2779,7 @@
         };
 
         const updateManualEntityOptions = () => {
+            console.log("updateManualEntityOptions called. manualCheckinCategory:", manualCheckinCategory);
             const manualEntitySelect = document.getElementById('manualEntity');
             manualEntitySelect.innerHTML = `<option value="">Select ${manualCheckinCategory === 'team' ? 'Team' : 'Class'}</option>`;
             const optionsToUse = manualCheckinCategory === 'team' ? teams : classes;
@@ -2708,10 +2791,12 @@
             });
             manualCheckinEntity = optionsToUse[0] || ''; // Set default entity after update
             manualEntitySelect.value = manualCheckinEntity; // Update select value
+            console.log("manualEntitySelect populated with:", optionsToUse);
         };
 
 
         const handleConfirmManualCheckin = async () => {
+            console.log("handleConfirmManualCheckin called.");
             const manualAthleteSelect = document.getElementById('manualAthlete');
             const manualCategorySelect = document.getElementById('manualCategory');
             const manualEntitySelect = document.getElementById('manualEntity');
@@ -2722,14 +2807,18 @@
             const selectedEntityName = manualEntitySelect.value;
             const selectedTimestamp = manualTimestampInput.value;
 
+            console.log("Manual Check-in input values:", { selectedAthleteId, selectedCategoryType, selectedEntityName, selectedTimestamp });
+
             if (!selectedAthleteId || !selectedCategoryType || !selectedEntityName || !selectedTimestamp) {
                 showCustomModal("Please fill all fields for the manual check-in.");
+                console.warn("Manual Check-in: Missing required fields.");
                 return;
             }
 
             const selectedAthlete = athletes.find(a => a.id === selectedAthleteId);
             if (!selectedAthlete) {
                 showCustomModal("Selected athlete not found.");
+                console.error("Manual Check-in: Selected athlete not found in global athletes array.");
                 return;
             }
 
@@ -2741,6 +2830,7 @@
 
             if (alreadyExists) {
                 showCustomModal("This athlete is already recorded for this team/class in this log. Please edit the existing entry or choose a different activity.");
+                console.warn("Manual Check-in: Entry already exists for this athlete in this log.");
                 return;
             }
 
@@ -2753,17 +2843,20 @@
             };
 
             currentLogAthletes.push(newEntry); // Add to the array for the current log being edited
+            console.log("Athlete added to currentLogAthletes. New array:", currentLogAthletes);
             showAddManualCheckinModal = false;
             document.getElementById('addManualCheckinModal').classList.add('hidden');
             renderCheckinLogsView(document.getElementById('coachViewContent')); // Re-render to show updated log entry
         };
 
         const handleCancelManualCheckin = () => {
+            console.log("handleCancelManualCheckin called.");
             showAddManualCheckinModal = false;
             document.getElementById('addManualCheckinModal').classList.add('hidden');
         };
 
         const handleEditLog = (logEntry) => {
+            console.log("handleEditLog called for logEntry:", logEntry.id);
             showConfirmWithInputModal(
                 "Enter MASTER passcode to edit this log entry:",
                 (enteredPasscode) => {
@@ -2774,43 +2867,56 @@
                                 ...event,
                                 timestamp: event.timestamp ? new Timestamp(event.timestamp.seconds, event.timestamp.nanoseconds).toDate() : null
                             })) : [];
+                        console.log("Entered edit mode. currentLogAthletes:", currentLogAthletes);
                         renderCheckinLogsView(document.getElementById('coachViewContent'));
                     } else {
                         showCustomModal("Incorrect MASTER passcode. You do not have permission to edit this log.");
+                        console.warn("Failed to enter edit mode: Incorrect passcode.");
                     }
-                },
-                () => {}
+                }
             );
         };
 
         const handleRemoveAthleteFromLog = (indexToRemove) => {
+            console.log("handleRemoveAthleteFromLog called. Index to remove:", indexToRemove);
+            console.log("currentLogAthletes BEFORE removal:", JSON.parse(JSON.stringify(currentLogAthletes))); // Deep copy for logging
             currentLogAthletes = currentLogAthletes.filter((_, index) => index !== indexToRemove);
+            console.log("currentLogAthletes AFTER removal:", JSON.parse(JSON.stringify(currentLogAthletes))); // Deep copy for logging
             renderCheckinLogsView(document.getElementById('coachViewContent'));
         };
 
         const handleUpdateAthleteFieldInLog = (index, field, value) => {
-            if (field === 'timestamp') {
-                currentLogAthletes[index][field] = value ? new Date(value) : null;
+            console.log(`handleUpdateAthleteFieldInLog called. Index: ${index}, Field: ${field}, Value:`, value);
+            if (currentLogAthletes[index]) {
+                if (field === 'timestamp') {
+                    currentLogAthletes[index][field] = value ? new Date(value) : null;
+                } else {
+                    currentLogAthletes[index][field] = value;
+                }
+                console.log("Updated currentLogAthletes entry:", currentLogAthletes[index]);
             } else {
-                currentLogAthletes[index][field] = value;
+                console.error(`Attempted to update non-existent log entry at index ${index}.`);
             }
         };
 
         const handleSaveLogChanges = async () => {
+            console.log("handleSaveLogChanges called.");
             if (!db || !userId || !editingLogEntryId || !appId) {
                 console.error("Save Log Changes Error: db, userId, editingLogEntryId, or appId not ready.", {db, userId, editingLogEntryId, appId});
+                showCustomModal("Error: Database or App ID not ready to save log changes.");
                 return;
             }
 
             try {
                 const logDocRef = doc(db, `artifacts/${appId}/users/${userId}/checkin_logs`, editingLogEntryId);
                 const eventsToSave = currentLogAthletes.map(event => {
-                    const { status, ...rest } = event; // Don't save status field
+                    const { status, ...rest } = event; // Don't save status field, it's derived
                     return {
                         ...rest,
                         timestamp: event.timestamp ? Timestamp.fromDate(event.timestamp) : null
                     };
                 });
+                console.log("Events to save to Firestore:", eventsToSave);
 
                 await updateDoc(logDocRef, {
                     dailyCheckInEvents: eventsToSave,
@@ -2818,8 +2924,9 @@
                 });
                 showCustomModal("Check-in log updated successfully!");
                 editingLogEntryId = null;
-                currentLogAthletes = [];
+                currentLogAthletes = []; // Clear temporary array after saving
                 renderCheckinLogsView(document.getElementById('coachViewContent'));
+                console.log("Log changes saved and UI re-rendered.");
             } catch (error) {
                 console.error("Error saving log changes:", error);
                 showCustomModal(`Failed to save log changes: ${error.message}`);
@@ -2827,8 +2934,9 @@
         };
 
         const handleCancelLogEdit = () => {
+            console.log("handleCancelLogEdit called.");
             editingLogEntryId = null;
-            currentLogAthletes = [];
+            currentLogAthletes = []; // Discard temporary changes
             renderCheckinLogsView(document.getElementById('coachViewContent'));
         };
 
@@ -2848,8 +2956,43 @@
                 renderApp();
             };
             document.getElementById('coachModeBtn').onclick = () => {
-                appMode = 'coach';
-                renderApp();
+                // If already logged in as coach, just switch mode
+                if (coachLoggedIn) {
+                    appMode = 'coach';
+                    renderApp();
+                    return;
+                }
+
+                // If not logged in, prompt for passcode
+                showConfirmWithInputModal(
+                    "Enter Coach Passcode or Master Passcode:",
+                    (enteredPasscode) => {
+                        // Check if entered passcode matches master passcode
+                        if (enteredPasscode === MASTER_PASSCODE) {
+                            coachLoggedIn = true;
+                            appMode = 'coach';
+                            showCustomModal("Master Passcode accepted! Welcome, Admin.");
+                            renderApp();
+                            return;
+                        }
+
+                        // Check if entered passcode matches any approved coach's passcode
+                        const matchingCoach = coaches.find(c => c.isApproved && c.passcode === enteredPasscode);
+                        if (matchingCoach) {
+                            coachLoggedIn = true;
+                            appMode = 'coach';
+                            showCustomModal(`Welcome, Coach ${matchingCoach.name}!`);
+                            renderApp();
+                        } else {
+                            showCustomModal("Incorrect passcode. Access denied.");
+                        }
+                    },
+                    () => {
+                        // Handle cancel - do nothing, stay on current mode
+                        showCustomModal("Access to Coach Dashboard cancelled.");
+                    },
+                    "Enter 4-digit passcode" // Placeholder text for input
+                );
             };
         });
     </script>
