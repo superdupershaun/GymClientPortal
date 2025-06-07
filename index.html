@@ -163,12 +163,21 @@
         let coaches = [];
         let currentDailyCheckins = [];
 
-        // Global variables provided by the Canvas environment
-        // DO NOT hardcode your Firebase project config here for GitHub Pages deployment.
-        // It will be injected by the Canvas environment at runtime.
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        // --- IMPORTANT: Firebase Configuration for GitHub Pages ---
+        // For deploying to GitHub Pages, you MUST hardcode your Firebase project config here.
+        // The __app_id and __firebase_config variables are ONLY injected by the Canvas environment.
+        const myFirebaseConfig = {
+           apiKey: "AIzaSyCCS1fFfmH4Y4tXn6Rv7w4baNYrz5VSFLg",
+  authDomain: "gym-check-in-d1bf5.firebaseapp.com",
+  projectId: "gym-check-in-d1bf5",
+  storageBucket: "gym-check-in-d1bf5.firebasestorage.app",
+  messagingSenderId: "667813844333",
+  appId: "1:667813844333:web:84e6746664e0540c933664",
+  measurementId: "G-K7WD5R8DDB"
+        };
 
+        const firebaseConfig = myFirebaseConfig;
+        const appId = firebaseConfig.projectId; // Use projectId as the application ID for consistency
 
         // UI State Variables (managed directly via global vars and DOM updates)
         let appMode = 'checkIn'; // 'checkIn' or 'coach'
@@ -502,7 +511,10 @@
 
         // Seed initial athlete data
         const seedInitialData = async () => {
-            if (!db || !userId || !appId) return;
+            if (!db || !userId || !appId) {
+                console.error("Seed Data Error: db, userId, or appId not ready.", {db, userId, appId});
+                return;
+            }
             const athletesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/athletes`);
             try {
                 const batch = writeBatch(db);
@@ -521,7 +533,10 @@
 
         // Seed initial coach data
         const seedInitialCoachData = async () => {
-            if (!db || !userId || !appId) return;
+            if (!db || !userId || !appId) {
+                console.error("Seed Coach Data Error: db, userId, or appId not ready.", {db, userId, appId});
+                return;
+            }
             const coachesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/coaches`);
             try {
                 const batch = writeBatch(db);
@@ -538,7 +553,10 @@
         };
 
         const setupFirebaseListeners = () => {
-            if (!db || !userId || !appId) return;
+            if (!db || !userId || !appId) {
+                console.warn("Skipping Firebase listeners setup: db, userId, or appId not ready.", {db, userId, appId});
+                return;
+            }
 
             // Athletes Listener
             const athletesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/athletes`);
@@ -604,7 +622,7 @@
 
         const initializeFirebase = async () => {
             try {
-                // Initialize Firebase app with the provided config from the Canvas environment
+                console.log("Attempting to initialize Firebase with config:", firebaseConfig);
                 firebaseApp = initializeApp(firebaseConfig);
                 db = getFirestore(firebaseApp);
                 auth = getAuth(firebaseApp);
@@ -617,12 +635,9 @@
                         console.log("Firebase Auth State: User logged in with UID:", userId); // Diagnostic log
                     } else {
                         try {
-                            // Use __initial_auth_token if available for custom sign-in, otherwise sign in anonymously
-                            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                                await signInWithCustomToken(auth, __initial_auth_token);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
+                            // On GitHub Pages, __initial_auth_token will be undefined.
+                            // We explicitly sign in anonymously.
+                            await signInAnonymously(auth);
                             console.log("Firebase Auth State: Signed in anonymously. New UID:", auth.currentUser?.uid); // Diagnostic log
                         } catch (error) {
                             console.error("Firebase Auth Error: Failed to sign in anonymously:", error);
@@ -637,7 +652,7 @@
                 });
             } catch (error) {
                 console.error("Firebase Initialization Error:", error);
-                showCustomModal(`Failed to initialize Firebase: ${error.message}.`);
+                showCustomModal(`Failed to initialize Firebase: ${error.message}. Please ensure your firebaseConfig is correct and filled in the HTML file.`);
                 isAuthReady = true; // Still set true to stop loading UI
                 document.getElementById('loadingSpinner').classList.add('hidden');
                 renderApp(); // Render what can be rendered, possibly an error state
@@ -867,6 +882,7 @@
 
         const handleAthleteCheckIn = async (athleteId, athleteName) => {
             if (!db || !userId || !appId) {
+                console.error("Check-in Error: db, userId, or appId not ready.", {db, userId, appId});
                 showCustomModal("Error: Database or App ID not ready for check-in.");
                 return;
             }
@@ -1043,6 +1059,7 @@
 
         const handleResetCheckIns = async () => {
             if (!db || !userId || !appId) {
+                console.error("Reset Check-ins Error: db, userId, or appId not ready.", {db, userId, appId});
                 showCustomModal("Error: Database or App ID not ready for reset.");
                 return;
             }
@@ -1413,6 +1430,7 @@
 
         const handleAddCoach = async (parentContainer) => {
             if (!db || !userId || !appId) {
+                console.error("Add Coach Error: db, userId, or appId not ready.", {db, userId, appId});
                 showCustomModal("Error: Database or App ID not ready to add coach.");
                 return;
             }
@@ -1480,6 +1498,7 @@
 
         const handleUpdateCoach = async (parentContainer) => {
             if (!db || !userId || !editingCoach || !appId) {
+                console.error("Update Coach Error: db, userId, editingCoach, or appId not ready.", {db, userId, editingCoach, appId});
                 showCustomModal("Error: Database, Auth, or coach data not ready to update.");
                 return;
             }
@@ -2297,8 +2316,10 @@
         };
 
         const handleSaveAthlete = async (athleteData) => {
+            console.log("Attempting to save athlete. Current states: db=", db, "userId=", userId, "appId=", appId);
             if (!db || !userId || !appId) {
-                showCustomModal("Error: Database or App ID not ready to save athlete.");
+                console.error("Save Athlete Error: db, userId, or appId not ready.", {db, userId, appId});
+                showCustomModal("Error: Database or App ID not ready to save athlete. Please check console for more details.");
                 return;
             }
             try {
@@ -2399,7 +2420,7 @@
                     <!-- Filters -->
                     <div class="bg-white rounded-lg shadow-md p-4 mb-6 flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4">
                         <input type="text" id="filterAthleteName" placeholder="Filter by athlete name..." class="p-2 border border-gray-300 rounded-md shadow-sm w-full sm:flex-grow focus:ring-blue-500 focus:border-blue-500 text-gray-800" value="${filterAthleteName}">
-                        <select id="filterStatus" class="p-2 border border-gray-300 rounded-md shadow-sm w-full sm:w-auto focus:ring-blue-500 focus:border-blue-500 text-gray-800">
+                        <select type="text" id="filterStatus" class="p-2 border border-gray-300 rounded-md shadow-sm w-full sm:w-auto focus:ring-blue-500 focus:border-blue-500 text-gray-800">
                             <option value="All" ${filterStatus === 'All' ? 'selected' : ''}>All Statuses</option>
                             <option value="Checked In" ${filterStatus === 'Checked In' ? 'selected' : ''}>Checked In</option>
                             <option value="Missed" ${filterStatus === 'Missed' ? 'selected' : ''}>Missed</option>
@@ -2776,7 +2797,10 @@
         };
 
         const handleSaveLogChanges = async () => {
-            if (!db || !userId || !editingLogEntryId || !appId) return;
+            if (!db || !userId || !editingLogEntryId || !appId) {
+                console.error("Save Log Changes Error: db, userId, editingLogEntryId, or appId not ready.", {db, userId, editingLogEntryId, appId});
+                return;
+            }
 
             try {
                 const logDocRef = doc(db, `artifacts/${appId}/users/${userId}/checkin_logs`, editingLogEntryId);
