@@ -23,7 +23,27 @@
     </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-blue-100 to-purple-100 font-sans text-gray-900 flex flex-col">
-    <div id="app" class="flex flex-col min-h-screen">
+
+    <!-- Main Login Container (initially visible) -->
+    <div id="mainLoginContainer" class="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-100 to-purple-100 p-4">
+        <div class="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full text-center">
+            <h2 class="text-2xl font-bold text-gray-800 mb-6">Cheer Gym Portal Login</h2>
+            <input
+                type="text" <!-- Changed to text to allow alphanumeric master passcode -->
+                id="mainPasscodeInput"
+                class="w-full p-3 border border-gray-300 rounded-md mb-4 text-center text-xl focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter Passcode"
+                <!-- Removed maxlength and oninput numeric filter to allow 'cheer123' -->
+            />
+            <button id="mainLoginBtn" class="w-full px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition duration-300 ease-in-out font-semibold text-lg">
+                Login
+            </button>
+            <p id="mainLoginError" class="text-red-500 text-sm mt-3 hidden">Incorrect passcode. Please try again.</p>
+        </div>
+    </div>
+
+    <!-- Main Application Container (initially hidden) -->
+    <div id="app" class="flex flex-col min-h-screen hidden">
         <!-- Header and Mode Switcher -->
         <header class="bg-white shadow-md p-4 flex flex-col sm:flex-row items-center justify-between rounded-b-xl mx-2 mt-2">
             <h1 class="text-3xl font-extrabold text-blue-800 mb-2 sm:mb-0">Cheer Gym Portal</h1>
@@ -162,6 +182,7 @@
         let athletes = [];
         let coaches = [];
         let currentDailyCheckins = [];
+        let isMainAppLoggedIn = false; // NEW: Controls access to the entire app
 
         // --- IMPORTANT: Firebase Configuration for GitHub Pages ---
         // For deploying to GitHub Pages, you MUST hardcode your Firebase project config here.
@@ -181,7 +202,7 @@
 
         // UI State Variables (managed directly via global vars and DOM updates)
         let appMode = 'checkIn'; // 'checkIn' or 'coach'
-        let coachLoggedIn = false; // New: Tracks coach login status
+        let coachLoggedIn = false; // New: Tracks coach login status (for coach dashboard access)
 
         // Modals
         let showModal = false;
@@ -253,7 +274,7 @@
         let filterCategory = 'All';
         let filterEntity = 'All';
 
-        const MASTER_PASSCODE = "cheer123";
+        const MASTER_PASSCODE = "cheer123"; // CORRECTED: Master passcode is 'cheer123'
 
         // Initial Data for Teams and Classes
         const teams = ['Sparkle Squad', 'Power Pumas', 'Victory Vipers', 'Cheer Comets'];
@@ -360,7 +381,7 @@
 
         // Dummy Coach Data for Seeding
         const dummyCoaches = [
-            { name: 'Coach Alex', email: 'alex@example.com', phone: '555-001-0001', isApproved: true, teams: ['Sparkle Squad', 'Power Pumas'], classes: ['Tumble Basics'], firebaseUid: '', passcode: '0000' },
+            { name: 'Coach Alex', email: 'alex@example.com', phone: '555-001-0001', isApproved: true, teams: ['Sparkle Squad', 'Power Pumas'], classes: ['Tumble Basics'], firebaseUid: '', passcode: '1234' }, // Updated passcode for Alex
             { name: 'Coach Ben', email: 'ben@example.com', phone: '555-002-0002', isApproved: true, teams: ['Victory Vipers'], classes: ['Jump & Stunt Drills', 'Routine Polish'], firebaseUid: '', isSuperAdmin: false, passcode: '0000' },
             { name: 'Coach Casey', email: 'casey@example.com', phone: '555-003-0003', isApproved: true, teams: ['Cheer Comets'], classes: ['Flexibility Fusion'], firebaseUid: '', isSuperAdmin: false, passcode: '0000' },
             { name: 'Coach Dylan', email: 'dylan@example.com', phone: '555-004-0004', isApproved: true, teams: [], classes: [], firebaseUid: '', isSuperAdmin: false, passcode: '0000' },
@@ -556,6 +577,7 @@
         };
 
         const setupFirebaseListeners = () => {
+            // This function will now ONLY be called after successful main login
             if (!db || !userId || !appId) {
                 console.warn("Skipping Firebase listeners setup: db, userId, or appId not ready.", {db, userId, appId});
                 return;
@@ -571,7 +593,7 @@
                     athletes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     console.log("Athletes loaded:", athletes.length); // Diagnostic log
                 }
-                renderApp(); // Re-render application after data update
+                if (isMainAppLoggedIn) renderApp(); // Only re-render if app is already logged in
             }, (error) => {
                 console.error("Error fetching athletes:", error);
                 showCustomModal(`Failed to fetch athletes: ${error.message}`);
@@ -585,9 +607,10 @@
                     await seedInitialCoachData();
                 } else {
                     coaches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    console.log("Coaches loaded:", coaches.length); // Diagnostic log
+                    console.log("Coaches loaded for main login:", coaches.length, coaches); // Diagnostic log: show coaches array
                 }
-                renderApp(); // Re-render application after data update
+                if (isMainAppLoggedIn) renderApp(); // Only re-render if app is already logged in
+                // If main app is not logged in, but coach data is needed for main login, this will update 'coaches' array
             }, (error) => {
                 console.error("Error fetching coaches:", error);
                 showCustomModal(`Failed to fetch coaches: ${error.message}`);
@@ -598,9 +621,11 @@
             onSnapshot(query(currentCheckinsRef), (snapshot) => {
                 currentDailyCheckins = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 console.log("Current daily check-ins loaded:", currentDailyCheckins.length);
-                renderCheckInPortal(); // Only re-render check-in section for efficiency
-                if (coachView === 'roster') { // Only update roster view if it's currently active
-                    renderRosterView(document.getElementById('coachViewContent'));
+                if (isMainAppLoggedIn) { // Only re-render if app is already logged in
+                    renderCheckInPortal(); // Only re-render check-in section for efficiency
+                    if (coachView === 'roster') { // Only update roster view if it's currently active
+                        renderRosterView(document.getElementById('coachViewContent'));
+                    }
                 }
             }, (error) => {
                 console.error("Error fetching current daily check-ins:", error);
@@ -617,7 +642,7 @@
                     timestamp: doc.data().timestamp?.toDate(), // Convert Firestore Timestamp to Date object
                 })).sort((a, b) => b.timestamp - a.timestamp); // Sort by most recent first
                 console.log("Check-in logs loaded:", checkinLogs.length);
-                renderCheckinLogsView(); // Re-render check-in logs view
+                if (isMainAppLoggedIn) renderCheckinLogsView(); // Only re-render if app is already logged in
             }, (error) => {
                 console.error("Error fetching check-in logs:", error);
                 showCustomModal(`Failed to fetch check-in logs: ${error.message}`);
@@ -630,6 +655,30 @@
                 firebaseApp = initializeApp(firebaseConfig);
                 db = getFirestore(firebaseApp);
                 auth = getAuth(firebaseApp);
+
+                // Initial setup for coach data listener (needed for main app login validation)
+                // This will populate the `coaches` array even before `isMainAppLoggedIn` is true.
+                // We fetch it once here immediately.
+                const coachesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/coaches`);
+                const coachesUnsubscribe = onSnapshot(query(coachesCollectionRef), async (snapshot) => {
+                    if (snapshot.empty) {
+                        console.log("No coaches found, seeding initial coach data...");
+                        await seedInitialCoachData();
+                    } else {
+                        coaches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        console.log("Coaches loaded for main login:", coaches.length, coaches); // Diagnostic log: show coaches array
+                    }
+                     // Stop this specific listener after initial load if `isMainAppLoggedIn` is false
+                    // The main `setupFirebaseListeners` will re-establish a listener if needed
+                    if (!isMainAppLoggedIn && coachesUnsubscribe) {
+                       coachesUnsubscribe();
+                       console.log("Initial coach listener unsubscribed.");
+                    }
+                }, (error) => {
+                    console.error("Error fetching coaches for main login:", error);
+                    showCustomModal(`Failed to fetch coach data for login: ${error.message}`);
+                });
+
 
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
@@ -650,25 +699,111 @@
                     }
                     isAuthReady = true;
                     document.getElementById('loadingSpinner').classList.add('hidden'); // Hide loading spinner
-                    setupFirebaseListeners(); // Start listening to data
-                    renderApp(); // Initial render of the app content
-                    console.log("Firebase initialized and listeners set up. App rendering."); // Diagnostic log
+
+                    // After Firebase Auth is ready, render the main login screen if not already logged into the app
+                    if (!isMainAppLoggedIn) {
+                        renderMainLoginScreen();
+                    } else {
+                        // If already logged in (e.g., refreshing page after successful login), re-render app normally
+                        setupFirebaseListeners(); // Re-establish all listeners
+                        renderApp();
+                    }
+                    console.log("Firebase initialized. Ready to show login or app."); // Diagnostic log
                 });
             } catch (error) {
                 console.error("Firebase Initialization Error:", error);
                 showCustomModal(`Failed to initialize Firebase: ${error.message}. Please ensure your firebaseConfig is correct and filled in the HTML file.`);
                 isAuthReady = true; // Still set true to stop loading UI
                 document.getElementById('loadingSpinner').classList.add('hidden');
-                renderApp(); // Render what can be rendered, possibly an error state
+                // Even on error, render the login screen to allow potential re-attempts
+                renderMainLoginScreen();
             }
         };
+
+        // NEW: Function to render the main application login screen
+        const renderMainLoginScreen = () => {
+            const mainLoginContainer = document.getElementById('mainLoginContainer');
+            const appContainer = document.getElementById('app');
+            const mainPasscodeInput = mainLoginContainer.querySelector('#mainPasscodeInput');
+            const mainLoginBtn = mainLoginContainer.querySelector('#mainLoginBtn');
+            const mainLoginError = mainLoginContainer.querySelector('#mainLoginError');
+
+            mainLoginContainer.classList.remove('hidden');
+            appContainer.classList.add('hidden');
+            document.getElementById('loadingSpinner').classList.add('hidden'); // Ensure spinner is hidden on login screen
+
+            mainPasscodeInput.value = ''; // Clear previous input
+            mainLoginError.classList.add('hidden'); // Hide any previous error
+            mainPasscodeInput.focus();
+
+            // Event listeners for the main login form
+            mainPasscodeInput.oninput = (e) => {
+                // Allow any input, validation happens on button click
+                e.target.value = e.target.value.trim();
+                mainLoginError.classList.add('hidden'); // Hide error on input
+            };
+
+            mainLoginBtn.onclick = async () => {
+                const enteredPasscode = mainPasscodeInput.value;
+                mainLoginError.classList.add('hidden');
+
+                console.log("Attempting main login with passcode:", enteredPasscode); // Debugging
+                console.log("Current coaches data:", coaches); // Debugging
+
+                if (!enteredPasscode) {
+                    mainLoginError.textContent = "Please enter a passcode.";
+                    mainLoginError.classList.remove('hidden');
+                    return;
+                }
+
+                let authenticated = false;
+                if (enteredPasscode === MASTER_PASSCODE) {
+                    authenticated = true;
+                    console.log("Main login: Master Passcode matched!"); // Debugging
+                } else {
+                    const matchingCoach = coaches.find(c => c.isApproved && c.passcode === enteredPasscode);
+                    if (matchingCoach) {
+                        authenticated = true;
+                        console.log("Main login: Coach Passcode matched for:", matchingCoach.name); // Debugging
+                    } else {
+                        console.log("Main login: No matching coach found for passcode."); // Debugging
+                    }
+                }
+
+                if (authenticated) {
+                    isMainAppLoggedIn = true;
+                    mainLoginContainer.classList.add('hidden');
+                    appContainer.classList.remove('hidden');
+                    setupFirebaseListeners(); // Start listening to all app data (athletes, logs, etc.)
+                    renderApp(); // Render the full app UI
+                    showCustomModal("Welcome! Portal access granted.");
+                } else {
+                    mainLoginError.textContent = "Incorrect passcode. Please try again.";
+                    mainLoginError.classList.remove('hidden');
+                }
+            };
+        };
+
 
         // =====================================
         // UI Rendering Functions
         // =====================================
 
         const renderApp = () => {
-            console.log("renderApp called. Current appMode:", appMode); // Diagnostic log
+            console.log("renderApp called. Current appMode:", appMode, "isMainAppLoggedIn:", isMainAppLoggedIn);
+
+            const mainLoginContainer = document.getElementById('mainLoginContainer');
+            const appContainer = document.getElementById('app');
+
+            if (!isMainAppLoggedIn) {
+                // This state should not be hit if logic is correct, but as a safeguard
+                renderMainLoginScreen();
+                return;
+            } else {
+                mainLoginContainer.classList.add('hidden');
+                appContainer.classList.remove('hidden');
+            }
+
             // Update mode buttons
             const checkInModeBtn = document.getElementById('checkInModeBtn');
             const coachModeBtn = document.getElementById('coachModeBtn');
@@ -691,7 +826,7 @@
                 if (coachLoggedIn) {
                     renderCoachDashboard();
                 } else {
-                    // If not logged in as coach, show a message or go back to check-in
+                    // If not logged in as coach (for coach dashboard), show a message or go back to check-in
                     const coachDashboardContainer = document.getElementById('coachDashboardContainer');
                     coachDashboardContainer.innerHTML = `
                         <div class="bg-white rounded-xl shadow-lg p-6 max-w-2xl mx-auto min-h-[400px] flex flex-col items-center justify-center text-center">
@@ -711,7 +846,7 @@
             }
 
             // Show/hide loading spinner based on auth readiness
-            document.getElementById('loadingSpinner').classList.toggle('hidden', isAuthReady);
+            document.getElementById('loadingSpinner').classList.toggle('hidden', isAuthReady && isMainAppLoggedIn);
         };
 
 
@@ -802,7 +937,7 @@
                         </svg>
                         Back to Categories
                     </button>
-                    <h3 class="text-2xl font-bold text-center text-gray-800 mb-6">${selectedName} Roster</h3>
+                    <h3 class="2xl font-bold text-center text-gray-800 mb-6">${selectedName} Roster</h3>
                     <p class="text-sm text-gray-600 text-center mb-4">Hold an athlete's name for ${CHECK_IN_HOLD_DURATION_SECONDS} second to check them in.</p>
                     <ul id="athleteRosterList" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 overflow-y-auto flex-grow"></ul>
                 `;
@@ -1809,7 +1944,7 @@
                 "Enter MASTER passcode to edit:",
                 (enteredPasscode) => {
                     if (enteredPasscode === MASTER_PASSCODE) {
-                        editingAthlete = { ...athlete }; // Mutable copy
+                        editingAthlete = { ...athlete }; // Create a mutable copy
                         viewingAthlete = null;
                         isAddingNewAthlete = false;
                         renderAthleteProfiles(document.getElementById('coachViewContent'));
@@ -2689,7 +2824,7 @@
                                     </div>
                                 `;
                                 const nameInput = listItem.querySelector('input[type="text"]');
-                                const timeInput = listItem.querySelector('input[type="datetime-local"]');
+                                const timeInput = listItem.querySelector('input[type="datetime-local']');
                                 const removeBtn = listItem.querySelector('.remove-athlete-from-log-btn');
 
                                 // Only allow changing time if it's not a 'Missed' entry
@@ -2946,7 +3081,7 @@
         // =====================================
         document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('loadingSpinner').classList.remove('hidden'); // Show loading spinner
-            initializeFirebase();
+            initializeFirebase(); // This will eventually lead to renderMainLoginScreen or renderApp
 
             document.getElementById('checkInModeBtn').onclick = () => {
                 appMode = 'checkIn';
@@ -2991,7 +3126,7 @@
                         // Handle cancel - do nothing, stay on current mode
                         showCustomModal("Access to Coach Dashboard cancelled.");
                     },
-                    "Enter 4-digit passcode" // Placeholder text for input
+                    "Enter passcode" // Placeholder text for input (removed '4-digit' as master is alphanumeric)
                 );
             };
         });
